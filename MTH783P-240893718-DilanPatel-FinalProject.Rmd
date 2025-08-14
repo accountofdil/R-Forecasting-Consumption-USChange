@@ -1,0 +1,1040 @@
+---
+output:
+  pdf_document:
+    latex_engine: xelatex
+    fig_caption: true
+fontsize: 12pt
+knitr:
+  opts_chunk:
+    warning: false
+    message: false
+header-includes: |
+  \pagenumbering{gobble}
+---
+
+\noindent\LARGE \textbf{Forecasting Consumption in \texttt{uschange} Dataset}
+
+\vspace{0.5cm}
+
+\noindent\small \textbf{Dilan Patel} (Student ID: \textbf{240893718}) \ | \ Email: \texttt{ah24020@qmul.ac.uk}
+
+Packages: `ggplot2`, `magick`, `forecast`, `fpp2`, `tseries`, `patchwork`, `GGally`, `gridExtra`, `knitr`
+
+In this research, analysis of `uschange`, a quarterly time series of United States economic indicators, will be conducted. The aim is to leverage a training dataset to forecast values of percentage change in personal consumption expenditure (`Consumption`). Revered academic literature exists surrounding time series analysis. For example, Engle (1982) adopted an Autoregressive Conditional Heteroscedastic process to estimate means and variances of inflation in the UK. Asokan (2022) utilised 5 years of stock data to compare forecasting errors between LSTM, sARIMA, and more models. Overall, these methods adapt to the dynamic nature of time series (Shah & Thaker 2024). 
+
+## 1. Question 1a)
+
+The `fpp2` package contains the `uschange` dataset, split into a training set (up to and including 2014 Q4) and a test set (2015 Q1 to 2016 Q3), ensuring the distinguishable former is suitable for forecasting `Consumption`. The training and test sets consists of 96.3% and 3.7% of observations, respectively. Intuitively, cross-validation is being applied through the `window()` command.
+
+## 2. Question 1b)
+
+The percentage change in personal savings exhibits the greatest mean (`1.215%`), whilst the corresponding statistic for unemployment rate is the lowest. `Savings` is of the greatest IQR (`11.8850%`) and variability. Quarter-based outliers in `Consumption`, `Income`, `Production` and `Savings` can be explained through periods of prosperity and recession that are common in economic cycles. The matrix below (Table 1) contains respective Pearson correlation coefficients between pairs of variables; `Production` and `Unemployment` exhibits a strong negative correlation (`-0.79896`). 
+
+```{r echo = FALSE}
+library(knitr)
+
+correlationmatrix <- data.frame(
+  Consumption   = c("1.000000", "0.3989102", "0.54879015", "-0.23931232", "-0.5439411"),
+  Income        = c("0.3989102", "1.000000", "0.27944720", "0.71379623", "-0.2312733"),
+  Production    = c("0.54879015", "0.27944720", "1.000000", "-0.06811485", "-0.7989555"),
+  Savings       = c("-0.23931232", "0.71379623", "-0.06811485", "1.000000", "0.1109808"),
+  Unemployment  = c("-0.5439411", "-0.2312733", "-0.7989555", "0.11098078", "1.000000"),
+  row.names     = c("Consumption", "Income", "Production", "Savings", "Unemployment")
+)
+
+kable(correlationmatrix, caption = "Correlation Matrix of Training Dataset")
+```
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6.5, fig.height = 6.5} 
+
+library(ggplot2)
+library(magick)
+library(forecast)
+library(fpp2)
+library(GGally)
+library(gridExtra)
+
+uschangeTraining <- window(uschange, end = c(2014,4))
+uschangeTest <- window(uschange, start = c(2015, 1), end = c(2016, 3))
+```
+
+Autocorrelation is the correlation of a time series and its lagged version. If bars are between the 95% (blue) confidence bounds, one cannot reject the hypothesis that autocorrelation at that lag equals zero. Correlograms (see section 5) reveal significant autocorrelation between `Unemployment` and lagged values of `Production` (lag 8), alongside `Consumption` as a single variable. Time series plots of each variable reveal seasonality (per quarter) for all, but the occurrence of a marginal increasing trend for `Savings`. For quarters 1, 2, 3 and 4, the seasonal effects were `0.3389378`, `0.01309833`, `-0.5958822` and `0.243846` respectively; across the four quarters, the seasonal effects were consistently the greatest for `Savings`. Stationarity is required for valid autoregressive models to be implemented. Hypothesis tests can identify stationarity beyond plots. The Augmented Dickey-Fuller (ADF) test was conducted, posing null hypotheses that the time series variables are non-stationary. For all variables, the ADF p-values were 0.01, and lower than 0.05, leading to rejection of the null. The Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test was also deployed. Both tests confirmed time series is stationary, completing the first model selection step. 
+
+## 3. Question 1c)
+
+To fit an appropriate statistical and autoregressive model to the training data, the following steps were conducted, where the `auto.arima()` function offered optimal choices:
+
+1. Verify stationarities of `Consumption`, `Savings`, `Income`, `Production` and `Unemployment`
+2. Leverage `auto.arima()` on 12 models that combine or omit different predictors (in `xreg`)
+3. Eliminate models of high Akaike and Bayesian Information Criterion values (`AIC > 300`)
+4. Conduct Ljung-Box tests and residual analysis to detect autocorrelation for remaining models
+5. Revert back to AIC/BIC and select the model containing the lowest values
+
+Ljung-Box tests determined whether residual series exhibit no autocorrelation; the null hypothesis states that residuals from a model are white noise (IID). These hypothesis tests were supplemented with residual visuals to conclude if a model passed step 4. AIC and BIC were calculated as $AIC = -2 \log(L) + 2(p + q + k + 1)$ and $BIC = AIC + [\log(T) - 2](p + q + k + 1)$. `ARIMA(1,1,1)(0,0,1)[4]` (labelled as `fit13` in Section 5) was selected for its limited autocorrelated (`LA`), successful Ljung-Box test, and comparatively low AIC/BIC values (as of step 4).
+
+```{r echo = FALSE}
+
+library(knitr)
+
+modelselection <- data.frame(
+  Model = c(
+    "ARIMA(3,1,0)(1,0,0)[4]", "ARIMA(1,0,2)(0,0,0)[4]", "ARIMA(2,0,2)(2,0,1)[4]", "ARIMA(1,0,1)(2,0,0)[4]",
+    "ARIMA(0,1,1)(0,0,2)[4]", "ARIMA(0,0,3)(0,0,0)[4]", "ARIMA(0,0,0)(0,0,0)[4]", "ARIMA(2,0,2)(0,0,0)[4]",
+    "ARIMA(2,0,2)(2,0,1)[4]", "ARIMA(1,1,1)(0,0,1)[4]", "ARIMA(1,1,1)(0,0,1)[4]", "ARIMA(1,1,1)(0,0,1)[4]"
+  ),
+  AIC = c(148.5681, 320.0586, 302.9512, 327.2188, 291.9642, 282.5582, 125.4509, 333.9086, 295.5078, 283.6457, 282.5318, 292.4357),
+  BIC = c(180.4420, 339.2163, 334.8808, 349.5695, 307.9011, 304.9088, 141.4157, 356.2593, 330.6303, 305.9574, 301.6561, 311.5600),
+  `Step 3` = c("Passed", "Failed", "Failed", "Failed", "Passed", "Passed", "Passed", "Failed", "Passed", "Passed", "Passed", "Passed"),
+  `Ljung-Box p-Value` = c("0.0004", "-", "-", "-", "0.3401", "0.6513", "0.08436", "-", "0.3635", "0.1015", "0.1476", "0.0611"),
+  Residuals = c("A", "-", "-", "-", "LA", "LA", "A", "-", "LA", "LA", "LA", "LA"),
+  `Step 4` = c("Failed", "-", "-", "-", "Passed", "Passed", "Failed", "-", "Passed", "Passed", "Passed", "Passed"),
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+kable(modelselection, align = rep("l", ncol(modelselection)), caption = "Model Selection Process")
+```
+
+The selected model contained the dependent variable of `Consumption`, plus `Income` and `Unemployment` as predictors. This seasonal Autoregressive Integrated Moving Average (ARIMA) model consists of non-seasonal orders ($p$ = 1, $d$ = 1, $q$ = 1), seasonal orders ($P$ = 0, $D$ = 0, $Q$ = 1), seasonal period $m = 4$, and differencing. The model specification is:
+$$(1 - \phi_1 B)(1 - B) y_t = (1 + \theta_1 B)(1 + \Theta_1 B^4) z_t + \beta_1 \text{Income}_t + \beta_2 \text{Unemployment}_t$$
+
+\( z_t \sim WN(0, \sigma^2) \). Seasonal ARIMA must be stationary in variance, with residuals of a white noise process. A Ljung-Box test renders a p-value of 0.1476 (lag = 24), indicating limited autocorrelation and stationarity. Figure 1 confirms residuals are homoscedastic (apart from lag = 16).
+
+``` {R echo = FALSE, warning = FALSE, message = FALSE, fig.width = 4, fig.height = 2, fig.align = "right"}
+
+fit13 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,c(2,5)])
+
+library(patchwork)
+res13 <- residuals(fit13)
+res13_df <- data.frame(time = time(res13), residuals = as.numeric(res13))
+
+ggAcf(res13, lag.max = 24) +
+  ggtitle("Figure 1: ACF for ARIMA(1,1,0)(1,1,0)[4] Errors") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),  
+    axis.title.y = element_text(size = 9)   
+  )
+```
+
+It's also assumed that the time series follows a normal distribution, verified with the Shapiro-Wilk test. The test yielded a p-value of 0.08536, which is greater than the significance level of 0.05, indicating no evidence to suggest data is not normally distributed. The Shapiro-Wilk test was supplemented with Q-Q plots, where residuals were found to be close to the reference line.
+
+`Consumption` forecasts for 2015 Q1 to 2016 Q3 were generated through the following steps:
+
+1. Examine `Income` and `Unemployment` decomposition to choose exponential smoothing method
+2. Use Holt-Winters' exponential smoothing for `Income` and `Unemployment` point forecasts
+3. Model the regressors `Income` and `Unemployment`, using outcomes from 2. as future inputs
+4. Interpret point forecasts, prediction intervals, and forecasting accuracy, for `Consumption`
+
+Holt-Winters' exponential smoothing comprised a forecast equation and an additive extension. For step 3, the `forecast()` function generated `Consumption` values. For step 4, 95% prediction intervals are given by $F_{T+1} \pm 1.96 \hat{\sigma}$. Forecast error is defined as $e_t = y_t - F_t$, where $y_t$ is the value of the given variable at time $t$, and $F_t$ is a forecast of $y_t$. Further measures of accuracy were computed. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+library(knitr)
+
+forecasts <- data.frame(
+  Quarter = c("2015 Q1", "2015 Q2", "2015 Q3", "2015 Q4",
+              "2016 Q1", "2016 Q2", "2016 Q3"),
+  `Point Forecast` = round(c(0.6447785, 0.7397209, 0.6778029, 0.6057074, 0.7178143, 0.7049611, 0.7275408), 3),
+  `Actual Value` = round(c(0.5962400, 0.7081439, 0.6649696, 0.5616798, 0.4046822, 1.0477074, 0.7295978), 3),
+  `Forecast Error` = round(c(-0.0485385, -0.0315770, -0.0128333, -0.0440276, -0.3131321, 0.3427463, 0.0020570), 3),
+  `Lower Bound` = round(c(-0.3748350, -0.2824982, -0.3623464, -0.4494361, -0.3376152, -0.3631856, -0.3498089), 3),
+  `Upper Bound` = round(c(1.664392, 1.761940, 1.717952, 1.660851, 1.773244, 1.773108, 1.804890), 3),
+  check.names = FALSE
+)
+
+forecasts$Quarter <- paste0(forecasts$Quarter, " \\hspace{1pt}")
+
+forecasts$`Prediction Interval` <- round(forecasts$`Upper Bound` - forecasts$`Lower Bound`, 3)
+
+kable(forecasts, align = "l", caption = "Forecasts for Consumption (2015 Q1 - 2016 Q3)")
+```    
+
+The largest point forecast was for 2015 Q2 (0.7397209). Forecasts were aligned with seasonality, and proximate to actual values. Moreover, for both training and test datasets, minimal values of `ME`, `RMSE` and `MASE` were found, indicating sufficient accuracy of model fitting and forecasting.
+
+``` {R, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 3, fig.align = "left"}
+
+forecastincomehw <- hw(uschangeTraining[,"Income"], h = 7, seasonal = "additive")
+forecastunemploymenthw <- hw(uschangeTraining[,"Unemployment"], h = 7, seasonal = "additive")
+
+newxreg <- cbind(income = as.numeric(forecastincomehw$mean), unemployment = as.numeric(forecastunemploymenthw$mean))
+colnames(newxreg) <- c("Income", "Unemployment")
+
+forecastconsumption <- forecast(fit13, xreg = newxreg, h = 7)
+
+autoplot(uschange[,"Consumption"], series = "Actual") +
+  autolayer(forecastconsumption, series = "Forecast", PI = TRUE) +
+  ggtitle("Figure 2: Actual vs. Forecasted Consumption (1970 Q1 - 2016 Q3)") +
+  xlab("Time (Year)") + ylab("% Change in Personal Consumption Expenditure") +
+  guides(colour = guide_legend(title = "Series")) +
+  scale_colour_manual(values = c("black", "lightblue")) + 
+  theme(
+    plot.title = element_text(size = 9),
+    axis.title.x = element_text(size = 8),  
+    axis.title.y = element_text(size = 8), 
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+  )
+  
+```
+
+## 4. Discussion & Conclusion
+
+Despite results, there are limitations of this analysis. For the selected model, there is slight autocorrelation at lag 16. Hence, for long-term forecasting, further investigation regarding seasonality and cyclicality is required, where a model containing lagged predictors could be considered. Also, the selected model's variables exhibited little to no trend. In reality, time series could consist of greater trends that require removal. For example, smoothing by a moving average can convert a time series \( y_t \) into another (\( x_t \)), through a linear operation such as $x_t = \frac{1}{2q + 1} \sum_{i = -q}^{q} y_{t+i}$. 
+
+To conclude, this research used R's `uschange` dataset to forecast values of percentage change in personal consumption expenditure (`Consumption`) for 2015 Q1 to 2016 Q3. By using a rigorous model selection process, meeting assumptions, and yielding promising performance metrics, similar analyses can be transferred to alternative time series problems. 
+
+\newpage
+
+## 5. R Code
+
+### 5.1. R Code - Question 1a)
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+library(ggplot2)
+library(magick)
+library(forecast)
+library(fpp2)
+library(GGally)
+library(gridExtra)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+uschange
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+uschangeTraining <- window(uschange, end = c(2014,4))
+uschangeTest <- window(uschange, start = c(2015, 1), end = c(2016, 3))
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+uschangeTraining
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+uschangeTest
+```
+--
+
+### 5.2. R Code - Question 1b)
+
+``` {r}
+start(uschangeTraining)
+end(uschangeTraining)
+cycle(uschangeTraining)
+summary(uschangeTraining)
+```
+
+\newpage
+
+```{r}
+consumption <- c(-2.2741, 0.4159, 0.7888, 0.7493, 1.1083, 2.3183)
+income      <- c(-4.2652, 0.2833, 0.7232, 0.7185, 1.1727, 4.5365)
+production  <- c(-6.8510, 0.1429, 0.6979, 0.5377, 1.3420, 4.1496)
+savings     <- c(-68.788, -4.820, 1.133, 1.215, 7.065, 50.758)
+unemployment<- c(-0.90000, -0.20000, 0.00000, 0.01167, 0.10000, 1.40000)
+
+iqrtraining <- c(
+  consumption[5] - consumption[2],
+  income[5]      - income[2],
+  production[5]  - production[2],
+  savings[5]     - savings[2],
+  unemployment[5]- unemployment[2])
+
+print(iqrtraining)
+```
+
+```{r}
+cor(uschangeTraining)
+```
+
+\newpage
+
+```{r ggpairs_plot, message = FALSE, warning = FALSE, fig.width = 8, fig.height = 8, cache = FALSE, dev = 'cairo_pdf'}
+library(GGally)
+
+GGally::ggpairs(
+  as.data.frame(uschangeTraining),
+  title = "Pairwise Correlation Matrix for Training Dataset",
+  progress = FALSE
+) +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, fig.width = 4, fig.height = 2, results = 'hide'}
+ggAcf(uschangeTraining[, "Consumption"]) +
+  ggtitle("ACF Correlogram for Consumption") +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+```{r, fig.width = 4, fig.height = 2, results = 'hide'}
+ggAcf(uschangeTraining[, "Income"]) +
+  ggtitle("ACF Correlogram for Income") +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, fig.width = 4, fig.height = 2, results = 'hide'}
+ggAcf(uschangeTraining[, "Unemployment"]) +
+  ggtitle("ACF Correlogram for Unemployment") +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+```{r, fig.width = 4, fig.height = 2, results = 'hide'}
+ggAcf(uschangeTraining[, "Production"]) +
+  ggtitle("ACF Correlogram for Production") +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, fig.width = 4, fig.height = 2, results = 'hide'}
+ggAcf(uschangeTraining[, "Savings"]) +
+  ggtitle("ACF Correlogram for Savings") +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, warning = FALSE, fig.width = 6.5, fig.height = 6.5}
+
+ggAcf(uschangeTraining) +
+  ggtitle("ACF Matrix for Training Dataset") + 
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),  
+    axis.title.y = element_text(size = 9)   
+  )
+
+```
+
+\newpage
+
+``` {r}
+uschangedata <- data.frame(
+  Time = time(uschangeTraining),
+  Consumption   = uschangeTraining[, "Consumption"],
+  Income        = uschangeTraining[, "Income"],
+  Production    = uschangeTraining[, "Production"],
+  Savings       = uschangeTraining[, "Savings"],
+  Unemployment  = uschangeTraining[, "Unemployment"])
+```
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+ggplot(uschangedata, aes(x = Time, y = Consumption)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Consumption (1970 Q1 - 2014 Q4)",
+    x = "Time (Year)",
+    y = "% Change in Personal Consumption Expenditure"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+ggplot(uschangedata, aes(x = Time, y = Income)) +
+  geom_line(color = "darkgreen") +
+  labs(
+    title = "Income (1970 Q1 - 2014 Q4)",
+    x = "Time (Year)",
+    y = "% Change in Personal Income"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+ggplot(uschangedata, aes(x = Time, y = Production)) +
+  geom_line(color = "gold") +
+  labs(
+    title = "Production (1970 Q1 - 2014 Q4)",
+    x = "Time (Year)",
+    y = "% Change in Industrial Production"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+ggplot(uschangedata, aes(x = Time, y = Savings)) +
+  geom_line(color = "purple") +
+  labs(
+    title = "Savings (1970 Q1 - 2014 Q4)",
+    x = "Time (Year)",
+    y = "% Change in Personal Savings"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+ggplot(uschangedata, aes(x = Time, y = Unemployment)) +
+  geom_line(color = "darkorange") +
+  labs(
+    title = "Unemployment (1970 Q1 - 2014 Q4)",
+    x = "Time (Year)",
+    y = "% Change in Unemployment Rate"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+``` {r}
+decompose(uschangeTraining)$seasonal[1]
+decompose(uschangeTraining[, "Consumption"])$seasonal[1]
+decompose(uschangeTraining[, "Income"])$seasonal[1]
+decompose(uschangeTraining[, "Production"])$seasonal[1]
+decompose(uschangeTraining[, "Savings"])$seasonal[1]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[1]
+```
+
+\newpage
+
+``` {r}
+decompose(uschangeTraining)$seasonal[2]
+decompose(uschangeTraining[, "Consumption"])$seasonal[2]
+decompose(uschangeTraining[, "Income"])$seasonal[2]
+decompose(uschangeTraining[, "Production"])$seasonal[2]
+decompose(uschangeTraining[, "Savings"])$seasonal[2]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[2]
+```
+
+\newpage
+
+``` {r}
+decompose(uschangeTraining)$seasonal[3]
+decompose(uschangeTraining[, "Consumption"])$seasonal[3]
+decompose(uschangeTraining[, "Income"])$seasonal[3]
+decompose(uschangeTraining[, "Production"])$seasonal[3]
+decompose(uschangeTraining[, "Savings"])$seasonal[3]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[3]
+```
+
+\newpage
+
+``` {r}
+decompose(uschangeTraining)$seasonal[4]
+decompose(uschangeTraining[, "Consumption"])$seasonal[4]
+decompose(uschangeTraining[, "Income"])$seasonal[4]
+decompose(uschangeTraining[, "Production"])$seasonal[4]
+decompose(uschangeTraining[, "Savings"])$seasonal[4]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[4]
+```
+
+\newpage
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+decomposedsavings <- decompose(uschangeTraining[, "Savings"])
+plot(decomposedsavings) 
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+decomposedincome <- decompose(uschangeTraining[, "Income"])
+plot(decomposedincome) 
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+decomposedproduction <- decompose(uschangeTraining[, "Production"])
+plot(decomposedproduction) 
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+decomposedunemployment <- decompose(uschangeTraining[, "Unemployment"])
+plot(decomposedunemployment) 
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+decomposedconsumption <- decompose(uschangeTraining[, "Consumption"])
+plot(decomposedconsumption) 
+```
+
+\newpage
+
+``` {r, warning = FALSE}
+library(tseries)
+adf.test(na.omit(decomposedsavings$random))
+adf.test(na.omit(decomposedconsumption$random))
+adf.test(na.omit(decomposedincome$random))
+adf.test(na.omit(decomposedproduction$random))
+adf.test(na.omit(decomposedunemployment$random))
+```
+
+\newpage
+
+``` {r, warning = FALSE}
+kpss.test(decomposedsavings$random)
+kpss.test(decomposedconsumption$random)
+kpss.test(decomposedincome$random)
+kpss.test(decomposedproduction$random)
+kpss.test(decomposedunemployment$random)
+```
+
+``` {r, warning = FALSE}
+library(tseries)
+adf.test(uschangeTraining[,"Consumption"])
+adf.test(uschangeTraining[,"Savings"])
+adf.test(uschangeTraining[,"Income"])
+adf.test(uschangeTraining[,"Production"])
+adf.test(uschangeTraining[,"Unemployment"])
+```
+
+\newpage
+
+``` {r, warning = FALSE}
+library(tseries)
+kpss.test(uschangeTraining[,"Consumption"])
+kpss.test(uschangeTraining[,"Savings"])
+kpss.test(uschangeTraining[,"Income"])
+kpss.test(uschangeTraining[,"Production"])
+kpss.test(uschangeTraining[,"Unemployment"])
+```
+
+\newpage
+
+### 5.3. R Code - Question 1c)
+
+``` {r}
+fit3 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[, 2:5])
+summary(fit3)
+```
+
+``` {r}
+fit4 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,2])
+summary(fit4)
+```
+
+\newpage
+
+``` {r}
+fit5 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,3])
+summary(fit5)
+```
+
+``` {r}
+fit6 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,4])
+summary(fit6)
+```
+
+\newpage
+
+``` {r}
+fit7 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,5])
+summary(fit7)
+```
+
+``` {r}
+fit8 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,2:3])
+summary(fit8)
+```
+
+\newpage
+
+``` {r}
+fit9 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,2:4])
+summary(fit9)
+```
+
+``` {r}
+fit10 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,2:2, drop = FALSE] 
+                    + uschangeTraining[,5, drop = FALSE])
+summary(fit10)
+```
+
+\newpage
+
+``` {r}
+fit11 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,3:4])
+summary(fit11)
+```
+
+``` {r}
+fit12 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,3:5])
+summary(fit12)
+```
+
+\newpage
+
+``` {r}
+fit13 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,c(2,5)])
+summary(fit13)
+```
+
+``` {r}
+fit14 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,c(3,5)])
+summary(fit14)
+```
+
+\newpage
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res3 <- residuals(fit3)
+tsdisplay(res3)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit3)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res3, fitdf = 5, lag = 12, type = "Lj")
+Box.test(res3, fitdf = 5, lag = 24, type = "Lj")
+Box.test(res3, fitdf = 5, lag = 48, type = "Lj")
+Box.test(res3, fitdf = 5, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res7 <- residuals(fit7)
+tsdisplay(res7)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit7)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res7, fitdf = 3, lag = 12, type = "Lj")
+Box.test(res7, fitdf = 3, lag = 24, type = "Lj")
+Box.test(res7, fitdf = 3, lag = 48, type = "Lj")
+Box.test(res7, fitdf = 3, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res8 <- residuals(fit8)
+tsdisplay(res8)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit8)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res8, fitdf = 3, lag = 12, type = "Lj")
+Box.test(res8, fitdf = 3, lag = 24, type = "Lj")
+Box.test(res8, fitdf = 3, lag = 48, type = "Lj")
+Box.test(res8, fitdf = 3, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res9 <- residuals(fit9)
+tsdisplay(res9)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit9)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res9, fitdf = 0, lag = 12, type = "Lj")
+Box.test(res9, fitdf = 0, lag = 24, type = "Lj")
+Box.test(res9, fitdf = 0, lag = 48, type = "Lj")
+Box.test(res9, fitdf = 0, lag = 60, type = "Lj")
+```
+
+\newpage
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res11 <- residuals(fit11)
+tsdisplay(res11)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit11)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res11, fitdf = 7, lag = 12, type = "Lj")
+Box.test(res11, fitdf = 7, lag = 24, type = "Lj")
+Box.test(res11, fitdf = 7, lag = 48, type = "Lj")
+Box.test(res11, fitdf = 7, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res12 <- residuals(fit12)
+tsdisplay(res12)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit12)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res12, fitdf = 7, lag = 12, type = "Lj")
+Box.test(res12, fitdf = 7, lag = 24, type = "Lj")
+Box.test(res12, fitdf = 7, lag = 48, type = "Lj")
+Box.test(res12, fitdf = 7, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res13 <- residuals(fit13)
+tsdisplay(res13)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit13)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res13, fitdf = 3, lag = 12, type = "Lj")
+Box.test(res13, fitdf = 3, lag = 24, type = "Lj")
+Box.test(res13, fitdf = 3, lag = 48, type = "Lj")
+Box.test(res13, fitdf = 3, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res14 <- residuals(fit14)
+tsdisplay(res14)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+checkresiduals(fit14)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res14, fitdf = 7, lag = 12, type = "Lj")
+Box.test(res14, fitdf = 7, lag = 24, type = "Lj")
+Box.test(res14, fitdf = 7, lag = 48, type = "Lj")
+Box.test(res14, fitdf = 7, lag = 60, type = "Lj")
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+res13 <- residuals(fit13)
+```
+
+\newpage
+
+``` {r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 3}
+autoplot(res13) +
+  ggtitle("Residuals (1970 Q1 - 2014 Q4)") +
+  ylab("Residuals") +
+  xlab("Time (Year)") +
+  theme_minimal() + 
+    theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+``` {r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 3}
+ggAcf(res13) + ggtitle("ACF of Residuals (fit13)") + theme_minimal() +
+    theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+``` {r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 3}
+ggplot(data.frame(res13), aes(x = res13)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+  geom_density(color = "red") +
+  ggtitle("Histogram of Residuals (fit13)") +
+  xlab("Residuals") +
+  theme_minimal() + 
+    theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+``` {r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 3}
+ggplot(data.frame(sample = res13), aes(sample = sample)) +
+  stat_qq() +
+  stat_qq_line() +
+  ggtitle("Q-Q Plot of Residuals (fit13)") +
+  theme_minimal() + 
+    theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+``` {r warning = FALSE, message = FALSE, fig.width = 7, fig.height = 5}
+
+library(patchwork)
+res13 <- residuals(fit13)
+res13df <- data.frame(time = time(res13), residuals = as.numeric(res13))
+
+fit13p1 <- ggplot(res13_df, aes(x = time, y = residuals)) +
+  geom_line() +
+  ggtitle("Residual Analysis for ARIMA(1,1,0)(1,1,0)[4] Errors") +
+  xlab("Time (Year)") +
+  ylab("Residuals") +
+  theme_minimal() + 
+    theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+
+fit13p2 <- ggAcf(res13, lag.max = 24) +
+  ggtitle("ACF for ARIMA(1,1,0)(1,1,0)[4] Errors") +
+  theme_minimal() +
+    theme(
+    plot.title = element_text(size = 8),
+    axis.title.x = element_text(size = 7),
+    axis.title.y = element_text(size = 7)
+  )
+
+fit13p3 <- ggplot(res13_df, aes(x = residuals)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "gray", color = "black") +
+  geom_density(color = "orange", size = 1) +
+  xlab("Residuals") +
+  ylab("Density") +
+  ggtitle("Histogram for ARIMA(1,1,0)(1,1,0)[4] Residuals") +
+  theme_minimal() +
+    theme(
+    plot.title = element_text(size = 8),
+    axis.title.x = element_text(size = 7),
+    axis.title.y = element_text(size = 7)
+  )
+
+fit13p1 / (fit13p2 | fit13p3)
+```
+
+\newpage
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+Box.test(res13, fitdf = 3, lag = 12, type = "Lj")
+Box.test(res13, fitdf = 3, lag = 24, type = "Lj")
+Box.test(res13, fitdf = 3, lag = 48, type = "Lj")
+Box.test(res13, fitdf = 3, lag = 60, type = "Lj")
+```
+
+``` {r}
+shapiro.test(residuals(fit13))
+```
+
+\newpage
+
+``` {r}
+library(forecast)
+fit13 <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,c(2,5)])
+summary(fit13)
+fit13s <- auto.arima(uschangeTraining[,1], xreg = uschangeTraining[,c(2,5)], 
+                     d = 1, D = 1, seasonal = TRUE)
+summary(fit13s)
+```
+
+\newpage
+
+``` {r}
+decompose(uschangeTraining[, "Income"])$seasonal[1]
+decompose(uschangeTraining[, "Income"])$seasonal[2]
+decompose(uschangeTraining[, "Income"])$seasonal[3]
+decompose(uschangeTraining[, "Income"])$seasonal[4]
+```
+
+\newpage
+
+``` {r}
+decompose(uschangeTraining[, "Unemployment"])$seasonal[1]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[2]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[3]
+decompose(uschangeTraining[, "Unemployment"])$seasonal[4]
+```
+
+\newpage
+
+``` {r}
+incomedec <- decompose(uschangeTraining[, "Income"])
+seasonalincome <- incomedec$seasonal
+tapply(seasonalincome, cycle(seasonalincome), mean)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+plot(seasonalincome)
+```
+
+``` {r}
+unemploymentdec <- decompose(uschangeTraining[, "Unemployment"])
+seasonalunemployment <- unemploymentdec$seasonal
+tapply(seasonalunemployment, cycle(seasonalunemployment), mean)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+plot(seasonalunemployment)
+```
+
+\newpage
+
+``` {r}
+forecastincomehw <- hw(uschangeTraining[,"Income"], h = 7, 
+                       seasonal = "additive")
+forecastunemploymenthw <- hw(uschangeTraining[,"Unemployment"], h = 7, 
+                             seasonal = "additive")
+```
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+autoplot(forecastincomehw) +
+  ggtitle("Actual vs. Forecasted Income (1970 Q1 – 2016 Q3)") +
+  xlab("Time (Year)") +
+  ylab("% Percentage Change in Personal Income") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+```{r, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4}
+autoplot(forecastunemploymenthw) +
+  ggtitle("Actual vs. Forecasted Unemployment (1970 Q1 – 2016 Q3)") +
+  xlab("Time (Year)") +
+  ylab("% Percentage Change in Unemployment Rate") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 9),
+    axis.title.y = element_text(size = 9)
+  )
+```
+
+\newpage
+
+``` {r}
+accuracy(forecastincomehw)
+accuracy(forecastunemploymenthw)
+```
+
+``` {r}
+forecastincomehw$mean
+```
+
+``` {r}
+forecastunemploymenthw$mean
+```
+
+\newpage
+
+``` {r}
+newxreg <- cbind(income = as.numeric(forecastincomehw$mean), 
+                 unemployment = as.numeric(forecastunemploymenthw$mean))
+print(newxreg)
+colnames(newxreg) <- c("Income", "Unemployment")
+print(newxreg)
+```
+
+\newpage
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+forecastconsumption <- forecast(fit13, xreg = newxreg, h = 7)
+print(forecastconsumption)
+```
+
+``` {r, echo = TRUE, results = 'hide', fig.show = 'hide', message = FALSE, warning = FALSE}
+plot(forecastconsumption)
+```
+
+``` {r, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4}
+autoplot(uschange[,"Consumption"], series = "Actual") +
+  autolayer(forecastconsumption, series = "Forecast", PI = TRUE) +
+  ggtitle("Actual vs. Forecasted Consumption (1970 Q1 - 2016 Q3)") +
+  xlab("Time (Year)") + ylab("% Change in Personal Consumption Expenditure") +
+  guides(colour = guide_legend(title = "Series")) +
+  scale_colour_manual(values = c("black", "lightblue")) + 
+  theme(
+    plot.title = element_text(size = 9),
+    axis.title.x = element_text(size = 8),  
+    axis.title.y = element_text(size = 8), 
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8)
+  )
+```
+
+``` {r}
+accuracy(forecastconsumption, c(0.5962400, 0.7081439, 0.6649696, 0.5616798, 
+                                0.4046822, 1.0477074, 0.7295978))
+```
+
+\newpage
+
+## 6. References
+
+Huang, W. (2025). Time Series Analysis for Business (Lecture Notes). Queen Mary University of London. Available at: https://qmplus.qmul.ac.uk/course/view.php?id=26204#section-26
+
+Sharma, R. and Singh, R. (2024). A Review of Time Series Forecasting Methods. Available at: https://www.researchgate.net/publication/379862462_A_Review_of_Time_Series_Forecasting_Methods [Accessed 5 May 2025].
+
+Gashaw, B.K. (2022). Forecasting Unemployment Rate Using Time Series Models: The Case of Sweden. Södertörn University. Available at: https://www.diva-portal.org/smash/get/diva2:1671481/FULLTEXT01.pdf [Accessed 5 May 2025].
+
+Almeida, A., Alencar, T. and Vieira, F. (2024). Time Series Forecasting: Comparative Study Between Classical and Deep Learning Models. Available at: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5140015 [Accessed 5 May 2025].
+
+Engle, R.F. (1982). Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation. Econometrica, 50(4), pp. 987–1007. Available at: http://www.econ.uiuc.edu/~econ536/Papers/engle82.pdf [Accessed 5 May 2025].
+
+Brown, J. (2025). Shapiro-Wilk Test: Definition and Examples. Available at: https://builtin.com/data-science/shapiro-wilk-test [Accessed 5 May 2025].
+
+
+
+
