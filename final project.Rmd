@@ -1,0 +1,24 @@
+
+
+Model Label      AIC         BIC         Model                    Step 3      p-value (Lag = 24)   Residuals           Step 4
+fit3             148.5681    180.4420    ARIMA(3,1,0)(1,0,0)[4]   Passed      0.0004               A                   Failed  
+fit4             320.0586    339.2163    ARIMA(1,0,2)(0,0,0)[4]   Failed      
+fit5             302.9512    334.8808    ARIMA(2,0,2)(2,0,1)[4]   Failed
+fit6             327.2188    349.5695    ARIMA(1,0,1)(2,0,0)[4]   Failed
+fit7             291.9642    307.9011    ARIMA(0,1,1)(0,0,2)[4]   Passed      0.3401               LA                  Passed
+fit8             282.5582    304.9088    ARIMA(0,0,3)(0,0,0)[4]   Passed      0.6513               LA                  Passed     
+fit9             125.4509    141.4157    ARIMA(0,0,0)(0,0,0)[4]   Passed      0.08436              A                   Failed
+fit10            333.9086    356.2593    ARIMA(2,0,2)(0,0,0)[4]   Failed
+fit11            295.5078    330.6303    ARIMA(2,0,2)(2,0,1)[4]   Passed      0.3635               LA                  Passed
+fit12            283.6457    305.9574    ARIMA(1,1,1)(0,0,1)[4]   Passed      0.1015               LA                  Passed
+fit13            282.5318    301.6561    ARIMA(1,1,1)(0,0,1)[4]   Passed      0.1476               LA                  Passed
+fit14            292.4357    311.5600    ARIMA(1,1,1)(0,0,1)[4]   Passed      0.0611               LA                  Passed
+
+
+
+
+
+
+
+
+
